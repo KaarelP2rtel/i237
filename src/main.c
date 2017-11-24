@@ -1,9 +1,12 @@
+#include <avr/pgmspace.h>
 #include <stdio.h>
-#define __ASSERT_USE_STDERR
 #include <assert.h>
 #include <avr/io.h>
 #include <util/delay.h>
 #include "uart.h"
+#include "hmi_msg.h"
+#include "print_helper.h"
+#include "../lib/hd44780_111/hd44780.h"
 #define BLINK_DELAY_MS 100
 
 
@@ -21,14 +24,15 @@ static inline void init_leds(void)
 
 
 /* Init error console as stderr in UART1 and print user code info */
-static inline void init_errcon(void)
+static inline void init_con(void)
 {
-    simple_uart1_init();
-    stderr = &simple_uart1_out;
-    fprintf(stderr, "Version: %s built on: %s %s\n",
-            FW_VERSION, __DATE__, __TIME__);
-    fprintf(stderr, "avr-libc version: %s avr-gcc version: %s\n",
-            __AVR_LIBC_VERSION_STRING__, __VERSION__);
+    simple_uart0_init();
+    stdin = stdout = &simple_uart0_io;
+    fprintf_P(stdout, PROG_VER, FW_VERSION, __DATE__, __TIME__);
+    fprintf_P(stdout, LIBC_GCC_VER, __AVR_LIBC_VERSION_STRING__, __VERSION__);
+    fprintf(stdout, "\n");
+    fprintf_P(stdout, STUDENT);
+    fprintf(stdout, "\n");
 }
 
 
@@ -49,31 +53,48 @@ static inline void blink_leds(void)
 }
 
 
+
+
 void main(void)
 {
+    //Initialise LEDs, console and LCD
     init_leds();
-    init_errcon();
-    /* Test assert - REMOVE IN FUTURE LABS */
-    char *array;
-    uint32_t i = 1;
-    extern int __heap_start, *__brkval;
-    int v;
-    array = malloc( i * sizeof(char));
-    assert(array);
-    /* End test assert */
+    init_con();
+    lcd_init();
+    lcd_clrscr();
+    //Writes students name on the display
+    lcd_puts_P(STUDENT);
+    //ASCII table values
+    unsigned char array[128] = {0};
+
+    for (unsigned char i = 0; i < sizeof(array); i++) {
+        array[i] = i;
+    }
+
+    //Print ASCII table and Print ASCII for humans using the array.
+    fprintf(stdout, "\n");
+    print_ascii_tbl(stdout);
+    fprintf(stdout, "\n");
+    print_for_human(stdout, array, sizeof(array) - 1);
 
     while (1) {
+        //Prints text, reads input and prints input
+        char input[20];
+        fprintf_P(stdout, ENTER);
+        scanf("%s", input);
+        fprintf(stdout, input);
+        //Converts input into Integer (Warning, ignores non digit characters)
+        int in_int = atoi(input);
+
+        //If input is between 0 and 9 prints integer as text from table
+        if (in_int >= 0 && in_int < 10) {
+            fprintf_P(stdout, ENTERED);
+            fprintf_P(stdout, NUMBERS[in_int]);
+        } else {
+            fprintf_P(stdout, WRONG);
+        }
+
+        //Blink LEDs
         blink_leds();
-        /* Test assert - REMOVE IN FUTURE LABS */
-        /*
-         * Increase memory allocated for array by 100 chars
-         * until we have eaten it all and print space between stack and heap.
-         * That is how assert works in run-time.
-         */
-        array = realloc( array, (i++ * 100) * sizeof(char));
-        fprintf(stderr, "%d\n",
-                (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval));
-        assert(array);
-        /* End test assert */
     }
 }

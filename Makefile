@@ -122,7 +122,7 @@ erase:
 # Format code using code formatter script
 format:
 	$(CODE_FORMATTER) $(SRCDIR)/*.c
-
+	$(CODE_FORMATTER) $(SRCDIR)/*.h
 # Print user code size
 size:
 	$(AVRSIZE) $(AVRSIZEARGS) $(ELF)
