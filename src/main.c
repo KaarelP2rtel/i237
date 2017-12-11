@@ -3,98 +3,106 @@
 #include <assert.h>
 #include <avr/io.h>
 #include <util/delay.h>
-#include "uart.h"
+#include <avr/interrupt.h>
+#include <time.h>
+#include "../lib/andygock_avr-uart/uart.h"
 #include "hmi_msg.h"
 #include "print_helper.h"
 #include "../lib/hd44780_111/hd44780.h"
-#define BLINK_DELAY_MS 100
+#include "../lib/helius_microrl/microrl.h"
+#include "cli_microrl.h"
 
+#define LED PORTA2 // Arduino Mega digital pin 24
+#define BLINK_DELAY_MS 100
+#define UART_BAUD 9600
+#define UART_STATUS_MASK 0x00FF
+
+//Create microrl object and pointer on it
+microrl_t rl;
+microrl_t *prl = &rl;
+
+
+static inline void start_cli(void)
+{
+    uart0_puts_p(PSTR("Use backspace to delete entry and enter to confirm.\r\n"));
+    microrl_init(prl, uart0_puts);
+    microrl_set_execute_callback(prl, cli_execute);
+}
+
+static inline void init_sys_timer(void)
+{
+    TCCR1A = 0;
+    TCCR1B = 0;
+    TCCR1B |= _BV(WGM12); // Turn on CTC (Clear Timer on Compare)
+    TCCR1B |= _BV(CS12); // fCPU/256
+    OCR1A = 62549; // Note that it is actually two registers OCR5AH and OCR5AL
+    TIMSK1 |= _BV(OCIE1A); // Output Compare A Match Interrupt Enable
+}
+
+
+static inline void init_uart1(void)
+{
+    uart1_init(UART_BAUD_SELECT(UART_BAUD, F_CPU));
+    uart1_puts_p(PSTR("\r\nError Console started\r\n"));
+    uart1_puts_p(PSTR(PROG_VERSION));
+}
+
+static inline void init_uart0(void)
+{
+    uart0_init(UART_BAUD_SELECT(UART_BAUD, F_CPU));
+    uart0_puts_p(PSTR("\r\nConsole started\r\n"));
+    uart0_puts(STUDENT);
+    uart0_puts_p(PSTR("\r\n"));
+}
 
 static inline void init_leds(void)
 {
-    /* set pin 7 of PORTB for output*/
-    DDRB |= _BV(DDB7);
-    /* set pins 0,2 and 4 of PORTA for output*/
-    DDRA |= _BV(DDB0);
     DDRA |= _BV(DDB2);
-    DDRA |= _BV(DDB4);
-    /*Turn off onboard LED*/
-    PORTB &= ~_BV(PORTB7);
 }
 
 
-/* Init error console as stderr in UART1 and print user code info */
-static inline void init_con(void)
+static inline void heartbeat(void)
 {
-    simple_uart0_init();
-    stdin = stdout = &simple_uart0_io;
-    fprintf_P(stdout, PROG_VER, FW_VERSION, __DATE__, __TIME__);
-    fprintf_P(stdout, LIBC_GCC_VER, __AVR_LIBC_VERSION_STRING__, __VERSION__);
-    fprintf(stdout, "\n");
-    fprintf_P(stdout, STUDENT);
-    fprintf(stdout, "\n");
+    static time_t prev_time;
+    char ascii_buf[11] = {0x00};
+    time_t now = time(NULL);
+
+    if (prev_time != now) {
+        //Print uptime to uart1
+        ltoa(now, ascii_buf, 10);
+        uart1_puts_p(PSTR("Uptime: "));
+        uart1_puts(ascii_buf);
+        uart1_puts_p(PSTR(" seconds\r"));
+        //Toggle LED
+        PORTA ^= _BV(LED);
+        prev_time = now;
+    }
 }
-
-
-static inline void blink_leds(void)
-{
-    /* Turn off Blue LED, turn on red LED */
-    _delay_ms(BLINK_DELAY_MS);
-    PORTA &= ~_BV(PORTB4);
-    PORTA |= _BV(PORTB0);
-    /* Turn off Red LED, turn on Green LED */
-    _delay_ms(BLINK_DELAY_MS);
-    PORTA &= ~_BV(PORTB0);
-    PORTA |= _BV(PORTB2);
-    /* Turn off Green LED, turn on Blue LED */
-    _delay_ms(BLINK_DELAY_MS);
-    PORTA &= ~_BV(PORTB2);
-    PORTA |= _BV(PORTB4);
-}
-
-
 
 
 void main(void)
 {
-    //Initialise LEDs, console and LCD
+    //Initialise consoles, LEDs, LCD, timer and CLI.
+    init_uart0();
+    init_uart1();
     init_leds();
-    init_con();
     lcd_init();
     lcd_clrscr();
-    //Writes students name on the display
-    lcd_puts_P(STUDENT);
-    //ASCII table values
-    unsigned char array[128] = {0};
-
-    for (unsigned char i = 0; i < sizeof(array); i++) {
-        array[i] = i;
-    }
-
-    //Print ASCII table and Print ASCII for humans using the array.
-    fprintf(stdout, "\n");
-    print_ascii_tbl(stdout);
-    fprintf(stdout, "\n");
-    print_for_human(stdout, array, sizeof(array) - 1);
+    lcd_puts(STUDENT);
+    init_sys_timer();
+    start_cli();
+    sei();
 
     while (1) {
-        //Prints text, reads input and prints input
-        char input[20];
-        fprintf_P(stdout, ENTER);
-        scanf("%s", input);
-        fprintf(stdout, input);
-        //Converts input into Integer (Warning, ignores non digit characters)
-        int in_int = atoi(input);
-
-        //If input is between 0 and 9 prints integer as text from table
-        if (in_int >= 0 && in_int < 10) {
-            fprintf_P(stdout, ENTERED);
-            fprintf_P(stdout, NUMBERS[in_int]);
-        } else {
-            fprintf_P(stdout, WRONG);
-        }
-
-        //Blink LEDs
-        blink_leds();
+        heartbeat();
+        microrl_insert_char (prl, uart0_getc() & UART_STATUS_MASK);
     }
 }
+
+
+
+ISR(TIMER1_COMPA_vect)
+{
+    system_tick();
+}
+
