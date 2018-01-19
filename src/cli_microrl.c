@@ -10,6 +10,8 @@
 #include "hmi_msg.h"
 #include "cli_microrl.h"
 #include "print_helper.h"
+#include "../lib/andy_brown_memdebug/memdebug.h"
+#include "../lib/matejx_avr_lib/mfrc522.h"
 
 #define NUM_ELEMS(x)        (sizeof(x) / sizeof((x)[0]))
 
@@ -20,6 +22,12 @@ void cli_print_ascii_tbls(const char *const *argv);
 void cli_handle_number(const char *const *argv);
 void cli_print_cmd_error(void);
 void cli_print_cmd_arg_error(void);
+void cli_print_free(const char *const *argv);
+void cli_print_list(const char *const *argv);
+void cli_add(const char *const *argv);
+void cli_remove(const char *const *argv);
+void cli_print_read(const char *const *argv);
+
 
 
 typedef struct cli_cmd {
@@ -28,6 +36,14 @@ typedef struct cli_cmd {
     void (*func_p)();
     const uint8_t func_argc;
 } cli_cmd_t;
+
+typedef struct card {
+    char *uid;
+    char *user;
+    struct card * next;
+} card_t;
+
+card_t * linkedlist = NULL;
 
 const char help_cmd[] PROGMEM = "help";
 const char help_help[] PROGMEM = "Get help";
@@ -41,7 +57,20 @@ const char ascii_help[] PROGMEM = "Print ASCII tables";
 const char number_cmd[] PROGMEM = "number";
 const char number_help[] PROGMEM =
     "Print and display matching number Usage: number <decimal number>";
+const char free_cmd[] PROGMEM = "free";
+const char free_help[] PROGMEM = "Print the amount of free memory.";
 
+const char list_cmd[] PROGMEM = "list";
+const char list_help[] PROGMEM = "Print all of the added cards";
+
+const char add_cmd[] PROGMEM = "add";
+const char add_help[] PROGMEM = "Add a card to the list";
+
+const char remove_cmd[] PROGMEM = "remove";
+const char remove_help[] PROGMEM = "Remove a card from the list";
+
+const char read_cmd[] PROGMEM = "read";
+const char read_help[] PROGMEM = "Print info about the current card.";
 
 const cli_cmd_t cli_cmds[] = {
     {help_cmd, help_help, cli_print_help, 0},
@@ -49,8 +78,187 @@ const cli_cmd_t cli_cmds[] = {
     {example_cmd, example_help, cli_example, 3},
     {ascii_cmd, ascii_help, cli_print_ascii_tbls, 0},
     {number_cmd, number_help, cli_handle_number, 1},
+
+    {free_cmd, free_help, cli_print_free, 0},
+    {list_cmd, list_help, cli_print_list, 0},
+    {add_cmd, add_help, cli_add, 2},
+    {remove_cmd, remove_help, cli_remove, 1},
+    {read_cmd, read_help, cli_print_read, 0},
 };
 
+
+
+void cli_print_free(const char *const *argv)
+{
+    (void) argv;
+    char print_buf[256] = {0x00};
+    extern int __heap_start, *__brkval;
+    int v;
+    int space;
+    static int prev_space;
+    space = (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
+    uart0_puts_p(PSTR("Heap statistics\r\n"));
+    sprintf_P(print_buf, PSTR("Used: %u\r\nFree: %u\r\n"), getMemoryUsed(),
+              getFreeMemory());
+    uart0_puts(print_buf);
+    uart0_puts_p(PSTR("\r\nSpace between stack and heap:\r\n"));
+    sprintf_P(print_buf, PSTR("Current  %d\r\nPrevious %d\r\nChange   %d\r\n"),
+              space, prev_space, space - prev_space);
+    uart0_puts(print_buf);
+    uart0_puts_p(PSTR("\r\nFreelist\r\n"));
+    sprintf_P(print_buf, PSTR("Freelist size:             %u\r\n"),
+              getFreeListSize());
+    uart0_puts(print_buf);
+    sprintf_P(print_buf, PSTR("Blocks in freelist:        %u\r\n"),
+              getNumberOfBlocksInFreeList());
+    uart0_puts(print_buf);
+    sprintf_P(print_buf, PSTR("Largest block in freelist: %u\r\n"),
+              getLargestBlockInFreeList());
+    uart0_puts(print_buf);
+    sprintf_P(print_buf, PSTR("Largest freelist block:    %u\r\n"),
+              getLargestAvailableMemoryBlock());
+    uart0_puts(print_buf);
+    sprintf_P(print_buf, PSTR("Largest allocable block:   %u\r\n"),
+              getLargestNonFreeListBlock());
+    uart0_puts(print_buf);
+    prev_space = space;
+}
+void cli_print_list(const char *const *argv)
+{
+    (void) argv;
+    card_t * current = linkedlist;
+    int count = 0;
+    char counts[10];
+
+    while (current != NULL) {
+        count++;
+        itoa(count, counts, 10);
+        uart0_puts(counts);
+        uart0_puts(". User: ");
+        uart0_puts(current->user);
+        uart0_puts(" UID: ");
+        uart0_puts(current->uid);
+        uart0_puts("\r\n");
+        current = current->next;
+    }
+}
+void cli_add(const char *const *argv)
+{
+    if (linkedlist == NULL) {
+        linkedlist = malloc(sizeof(card_t));
+
+        if (linkedlist == NULL) {
+            uart0_puts("Not enough memory to add a new card :(\n\r");
+            return;
+        }
+
+        linkedlist->uid = malloc(strlen(argv[1]) + 1);
+        strcpy(linkedlist->uid, argv[1]);
+        linkedlist->user = malloc(strlen(argv[2]) + 1);
+        strcpy(linkedlist->user, argv[2]);
+        linkedlist->next = NULL;
+        uart0_puts("Added UID ");
+        uart0_puts(linkedlist->uid);
+        uart0_puts(" for user ");
+        uart0_puts(linkedlist->user);
+        uart0_puts("\r\n");
+        return;
+    }
+
+    card_t * current = linkedlist;
+
+    while (current != NULL) {
+        if (strcmp(current->uid, argv[1]) == 0) {
+            uart0_puts("\r\nCan not add card. Card already in use by user ");
+            uart0_puts(current->user);
+            uart0_puts("\r\n\r\n");
+            return;
+        }
+
+        current = current->next;
+    }
+
+    current = linkedlist;
+
+    while (current ->next != NULL) {
+        current = current->next;
+    }
+
+    current->next = malloc(sizeof(card_t));
+    current = current->next;
+
+    if (current == NULL) {
+        uart0_puts("Not enough memory to add a new card :(\n\r");
+        return;
+    }
+
+    current->uid = malloc(strlen(argv[1]) + 1);
+    strcpy(current->uid, argv[1]);
+    current->user = malloc(strlen(argv[2]) + 1);
+    strcpy(current->user, argv[2]);
+    current->next = NULL;
+    uart0_puts("\r\nAdded UID ");
+    uart0_puts(current->uid);
+    uart0_puts(" for user ");
+    uart0_puts(current->user);
+    uart0_puts("\r\n\r\n");
+}
+
+
+
+void cli_remove(const char *const *argv)
+{
+    card_t * current = linkedlist;
+    card_t * temp;
+
+    if (strcmp(linkedlist->uid, argv[1]) == 0) {
+        temp = linkedlist->next;
+        free(linkedlist);
+        linkedlist = temp;
+    }
+
+    while (current != NULL) {
+        if (strcmp(current->next->uid, argv[1]) == 0) {
+            temp = current->next->next;
+            free(current->next);
+            current->next = temp;
+        }
+
+        current = current->next;
+    }
+}
+
+void cli_print_read(const char *const *argv)
+{
+    (void) argv;
+    Uid uid;
+    Uid *uid_ptr = &uid;
+    uart0_puts_P("\n\r");
+
+    if (PICC_IsNewCardPresent()) {
+        uart0_puts("Card selected!\n\r");
+        PICC_ReadCardSerial(uid_ptr);
+        char ssize[2];
+        itoa(uid.size, ssize, 10);
+        uart0_puts("\n\r");
+        uart0_puts("Card UID:");
+
+        for (byte i = 0; i < uid.size; i++) {
+            char suid[20];
+            itoa(uid.uidByte[i], suid, 10);
+            uart0_puts(suid);
+        }
+
+        uart0_puts(" (");
+        uart0_puts(ssize);
+        uart0_puts(" Bytes)\r\n");
+        uart0_puts("Card Type: ");
+        uart0_puts(PICC_GetTypeName(PICC_GetType(uid.sak)));
+        uart0_puts("\n\r");
+    } else {
+        uart0_puts("Unable to select card.\n\r");
+    }
+}
 
 void cli_print_help(const char *const *argv)
 {
@@ -103,6 +311,10 @@ void cli_handle_number(const char *const *argv)
     for (size_t i = 0; i < strlen(argv[1]); i++) {
         if (!isdigit(argv[1][i])) {
             uart0_puts_p(PSTR("Argument is not a decimal number!\r\n"));
+            lcd_clrscr();
+            lcd_puts(STUDENT);
+            lcd_goto(0x40);
+            lcd_puts("Invalid number");
             return;
         }
     }
@@ -112,6 +324,10 @@ void cli_handle_number(const char *const *argv)
     //If input is between 0 and 9 prints integer as text from table
     if (in_int > 10) {
         uart0_puts_p(PSTR("Please enter a number between 0 and 9\r\n"));
+        lcd_clrscr();
+        lcd_puts(STUDENT);
+        lcd_goto(0x40);
+        lcd_puts("Invalid number");
     } else {
         uart0_puts_p((PGM_P)pgm_read_word(&NUMBERS[in_int]));
         uart0_puts_p(PSTR("\r\n"));

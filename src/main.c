@@ -11,6 +11,7 @@
 #include "../lib/hd44780_111/hd44780.h"
 #include "../lib/helius_microrl/microrl.h"
 #include "cli_microrl.h"
+#include "../lib/matejx_avr_lib/mfrc522.h"
 
 #define LED PORTA2 // Arduino Mega digital pin 24
 #define BLINK_DELAY_MS 100
@@ -20,6 +21,7 @@
 //Create microrl object and pointer on it
 microrl_t rl;
 microrl_t *prl = &rl;
+
 
 
 static inline void start_cli(void)
@@ -91,6 +93,8 @@ void main(void)
     lcd_puts(STUDENT);
     init_sys_timer();
     start_cli();
+    MFRC522_init();
+    PCD_Init();
     sei();
 
     while (1) {
