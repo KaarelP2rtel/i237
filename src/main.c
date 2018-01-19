@@ -12,8 +12,11 @@
 #include "../lib/helius_microrl/microrl.h"
 #include "cli_microrl.h"
 #include "../lib/matejx_avr_lib/mfrc522.h"
+#include "rfid.h"
+#include <string.h>
 
 #define LED PORTA2 // Arduino Mega digital pin 24
+#define LED_DOOR PORTA4
 #define BLINK_DELAY_MS 100
 #define UART_BAUD 9600
 #define UART_STATUS_MASK 0x00FF
@@ -60,6 +63,7 @@ static inline void init_uart0(void)
 static inline void init_leds(void)
 {
     DDRA |= _BV(DDB2);
+    DDRA |= _BV(DDB4);
 }
 
 
@@ -82,6 +86,85 @@ static inline void heartbeat(void)
 }
 
 
+time_t door_changed = -2;
+time_t lastseen;
+char lastuid[20];
+char uid_string[20];
+bool statusis0 = false;
+void update_status(int status, char *user)
+{
+    if (status == 0) {
+        lcd_clrscr();
+        lcd_puts(STUDENT);
+        lcd_goto(0x40);
+        lcd_puts("Closed");
+        PORTA &= ~_BV(LED_DOOR);
+        statusis0 = true;
+    } else if (status == 1) {
+        lcd_clrscr();
+        lcd_puts(STUDENT);
+        lcd_goto(0x40);
+        lcd_puts("Open   ");
+        lcd_puts(user);
+        statusis0 = false;
+        PORTA |= _BV(LED_DOOR);
+        ;
+    } else {
+        lcd_clrscr();
+        lcd_puts(STUDENT);
+        lcd_goto(0x40);
+        lcd_puts("Closed AxsDenied");
+        PORTA &= ~_BV(LED_DOOR);
+        statusis0 = false;
+    }
+}
+
+
+void handle_door()
+{
+    Uid uid;
+    Uid *uid_ptr = &uid;
+
+    if (PICC_IsNewCardPresent()) {
+        strcpy(uid_string, "");
+        PICC_ReadCardSerial(uid_ptr);
+
+        for (byte i = 0; i < uid.size; i++) {
+            char suid[20];
+            itoa(uid.uidByte[i], suid, 10);
+            strcat(uid_string, suid);
+        }
+
+        lastseen = time(NULL);
+    }
+
+    if (time(NULL) - lastseen > 1) {
+        strcpy(lastuid, "");
+        strcpy(uid_string, "");
+    }
+
+    if (strcmp(lastuid, uid_string) != 0) {
+        char * user = find(uid_string);
+
+        if (user == NULL) {
+            update_status(2, NULL);
+            door_changed = time(NULL);
+        } else {
+            update_status(1, user);
+            door_changed = time(NULL);
+        }
+
+        strcpy(lastuid, uid_string);
+    }
+
+    if (time(NULL) - door_changed >= 2) {
+        if (!statusis0) {
+            update_status(0, NULL);
+        }
+    }
+}
+
+
 void main(void)
 {
     //Initialise consoles, LEDs, LCD, timer and CLI.
@@ -100,13 +183,10 @@ void main(void)
     while (1) {
         heartbeat();
         microrl_insert_char (prl, uart0_getc() & UART_STATUS_MASK);
+        handle_door();
     }
 }
-
-
-
 ISR(TIMER1_COMPA_vect)
 {
     system_tick();
 }
-

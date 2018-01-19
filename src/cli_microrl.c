@@ -10,6 +10,7 @@
 #include "hmi_msg.h"
 #include "cli_microrl.h"
 #include "print_helper.h"
+#include "rfid.h"
 #include "../lib/andy_brown_memdebug/memdebug.h"
 #include "../lib/matejx_avr_lib/mfrc522.h"
 
@@ -37,13 +38,7 @@ typedef struct cli_cmd {
     const uint8_t func_argc;
 } cli_cmd_t;
 
-typedef struct card {
-    char *uid;
-    char *user;
-    struct card * next;
-} card_t;
 
-card_t * linkedlist = NULL;
 
 const char help_cmd[] PROGMEM = "help";
 const char help_help[] PROGMEM = "Get help";
@@ -125,139 +120,23 @@ void cli_print_free(const char *const *argv)
 }
 void cli_print_list(const char *const *argv)
 {
-    (void) argv;
-    card_t * current = linkedlist;
-    int count = 0;
-    char counts[10];
-
-    while (current != NULL) {
-        count++;
-        itoa(count, counts, 10);
-        uart0_puts(counts);
-        uart0_puts(". User: ");
-        uart0_puts(current->user);
-        uart0_puts(" UID: ");
-        uart0_puts(current->uid);
-        uart0_puts("\r\n");
-        current = current->next;
-    }
+    (void )argv;
+    rfid_print_list();
 }
 void cli_add(const char *const *argv)
 {
-    if (linkedlist == NULL) {
-        linkedlist = malloc(sizeof(card_t));
-
-        if (linkedlist == NULL) {
-            uart0_puts("Not enough memory to add a new card :(\n\r");
-            return;
-        }
-
-        linkedlist->uid = malloc(strlen(argv[1]) + 1);
-        strcpy(linkedlist->uid, argv[1]);
-        linkedlist->user = malloc(strlen(argv[2]) + 1);
-        strcpy(linkedlist->user, argv[2]);
-        linkedlist->next = NULL;
-        uart0_puts("Added UID ");
-        uart0_puts(linkedlist->uid);
-        uart0_puts(" for user ");
-        uart0_puts(linkedlist->user);
-        uart0_puts("\r\n");
-        return;
-    }
-
-    card_t * current = linkedlist;
-
-    while (current != NULL) {
-        if (strcmp(current->uid, argv[1]) == 0) {
-            uart0_puts("\r\nCan not add card. Card already in use by user ");
-            uart0_puts(current->user);
-            uart0_puts("\r\n\r\n");
-            return;
-        }
-
-        current = current->next;
-    }
-
-    current = linkedlist;
-
-    while (current ->next != NULL) {
-        current = current->next;
-    }
-
-    current->next = malloc(sizeof(card_t));
-    current = current->next;
-
-    if (current == NULL) {
-        uart0_puts("Not enough memory to add a new card :(\n\r");
-        return;
-    }
-
-    current->uid = malloc(strlen(argv[1]) + 1);
-    strcpy(current->uid, argv[1]);
-    current->user = malloc(strlen(argv[2]) + 1);
-    strcpy(current->user, argv[2]);
-    current->next = NULL;
-    uart0_puts("\r\nAdded UID ");
-    uart0_puts(current->uid);
-    uart0_puts(" for user ");
-    uart0_puts(current->user);
-    uart0_puts("\r\n\r\n");
+    rfid_add(argv);
 }
-
-
 
 void cli_remove(const char *const *argv)
 {
-    card_t * current = linkedlist;
-    card_t * temp;
-
-    if (strcmp(linkedlist->uid, argv[1]) == 0) {
-        temp = linkedlist->next;
-        free(linkedlist);
-        linkedlist = temp;
-    }
-
-    while (current != NULL) {
-        if (strcmp(current->next->uid, argv[1]) == 0) {
-            temp = current->next->next;
-            free(current->next);
-            current->next = temp;
-        }
-
-        current = current->next;
-    }
+    rfid_remove(argv);
 }
 
 void cli_print_read(const char *const *argv)
 {
     (void) argv;
-    Uid uid;
-    Uid *uid_ptr = &uid;
-    uart0_puts_P("\n\r");
-
-    if (PICC_IsNewCardPresent()) {
-        uart0_puts("Card selected!\n\r");
-        PICC_ReadCardSerial(uid_ptr);
-        char ssize[2];
-        itoa(uid.size, ssize, 10);
-        uart0_puts("\n\r");
-        uart0_puts("Card UID:");
-
-        for (byte i = 0; i < uid.size; i++) {
-            char suid[20];
-            itoa(uid.uidByte[i], suid, 10);
-            uart0_puts(suid);
-        }
-
-        uart0_puts(" (");
-        uart0_puts(ssize);
-        uart0_puts(" Bytes)\r\n");
-        uart0_puts("Card Type: ");
-        uart0_puts(PICC_GetTypeName(PICC_GetType(uid.sak)));
-        uart0_puts("\n\r");
-    } else {
-        uart0_puts("Unable to select card.\n\r");
-    }
+    rfid_read();
 }
 
 void cli_print_help(const char *const *argv)
@@ -324,17 +203,9 @@ void cli_handle_number(const char *const *argv)
     //If input is between 0 and 9 prints integer as text from table
     if (in_int > 10) {
         uart0_puts_p(PSTR("Please enter a number between 0 and 9\r\n"));
-        lcd_clrscr();
-        lcd_puts(STUDENT);
-        lcd_goto(0x40);
-        lcd_puts("Invalid number");
     } else {
         uart0_puts_p((PGM_P)pgm_read_word(&NUMBERS[in_int]));
         uart0_puts_p(PSTR("\r\n"));
-        lcd_clrscr();
-        lcd_puts(STUDENT);
-        lcd_goto(0x40);
-        lcd_puts_P((PGM_P)pgm_read_word(&NUMBERS[in_int]));
     }
 }
 
